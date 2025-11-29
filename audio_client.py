@@ -5,6 +5,7 @@ import struct
 import time
 import os
 import tkinter as tk 
+import sys
 
 SERVER_IP = '127.0.0.1' 
 AUDIO_PORT = 5000
@@ -16,6 +17,7 @@ CHUNK_SIZE = 2048
 
 IS_MUTED = False
 SHOULD_QUIT = threading.Event() 
+USER_NAME = sys.argv[1] if len(sys.argv) > 1 else "Anonymous"
 
 audio_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 try:
@@ -33,19 +35,19 @@ def toggle_mute(mute_button):
     
     if IS_MUTED:
         mute_button.config(text="Unmute", bg="#70ff70", fg="black")
-        print("[STATUS] Microphone is now muted")
+        print(f"[STATUS] Microphone is now muted by {USER_NAME}")
     else:
         mute_button.config(text="Mute", bg="#ff7070", fg="white")
-        print("[STATUS] Microphone is now unmuted")
+        print(f"[STATUS] Microphone is now unmuted by {USER_NAME}")
 
 def create_controls():
     root = tk.Tk()
-    root.title("Audio Controls")
+    root.title(f"Audio Controls - {USER_NAME}")
     root.geometry("250x100")
     root.resizable(False, False)
     root.protocol("WM_DELETE_WINDOW", lambda: on_close(root)) 
 
-    label = tk.Label(root, text="Microphone Status:", font=("Arial", 10))
+    label = tk.Label(root, text=f"Microphone Status ({USER_NAME}):", font=("Arial", 10))
     label.pack(pady=5)
     
     mute_button = tk.Button(root, text="Mute", command=lambda: toggle_mute(mute_button), 
@@ -74,7 +76,7 @@ def send_audio():
             continue
             
         try:
-            data = stream.read(CHUNK_SIZE, exception_on_overflow=False) 
+            data = stream.read(CHUNK_SIZE) 
             audio_socket.sendall(data)
         except Exception:
             break
@@ -124,7 +126,6 @@ def recv_audio():
             
     stream.close()
     print("[AUDIO] Receiver thread closed.")
-
 
 if __name__ == '__main__':
     send_thread = threading.Thread(target=send_audio, daemon=True)
