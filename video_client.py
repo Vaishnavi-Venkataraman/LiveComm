@@ -5,26 +5,26 @@ import struct
 import threading
 import time
 import os
-import sys
-import numpy as np # Needed for creating the placeholder frame
+import numpy as np
+import tkinter as tk 
 
 # --- Configuration ---
 SERVER_IP = '127.0.0.1' 
 VIDEO_PORT = 9999
-USER_NAME = input("Enter your display name (e.g., Alice): ")
+USER_NAME = input("Enter your display name: ")
 CLIENT_ID = None 
 
 # --- Global Control Flags ---
 IS_VIDEO_OFF = False
 SHOULD_QUIT = threading.Event() 
 
-# --- Setup ---
+# --- Setup Video Socket ---
 video_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 try:
     video_socket.connect((SERVER_IP, VIDEO_PORT))
-    print(f"[VIDEO] Connected to server at {SERVER_IP}:{VIDEO_PORT}")
+    print(f"[VIDEO] Connected to video server.")
 except Exception as e:
-    print(f"[FATAL] Failed to connect to server: {e}")
+    print(f"[FATAL] Failed to connect to video server: {e}")
     os._exit(1)
 
 # --- CAMERA INITIALIZATION ---
@@ -49,35 +49,43 @@ cv2.putText(PLACEHOLDER_FRAME, f"VIDEO OFF - {USER_NAME}", (W // 4, H // 2),
 PICKLED_PLACEHOLDER = pickle.dumps(PLACEHOLDER_FRAME)
 
 
-# --- Control Logic ---
+# --- Tkinter Control Logic ---
 
-def control_loop():
-    """Reads commands from the terminal to toggle video or quit."""
+def toggle_video(video_button):
+    """Toggles the VIDEO_OFF flag and updates the button text/color."""
     global IS_VIDEO_OFF
+    IS_VIDEO_OFF = not IS_VIDEO_OFF
     
-    print("\n[CONTROLS] Type 'v' to Toggle Video, or 'q' to Quit.")
+    if IS_VIDEO_OFF:
+        video_button.config(text=" Turn ON Video",bg="#70ff70", fg="black" )
+        print("[STATUS] Video is now OFF.")
+    else:
+        video_button.config(text="Turn OFF Video", bg="#ff7070", fg="white")
+        print("[STATUS] Video is now ON (Sending live feed).")
+
+def create_controls():
+    """Sets up the Tkinter control panel."""
+    root = tk.Tk()
+    root.title(f"Video Controls - {USER_NAME}")
+    root.geometry("250x100")
+    root.resizable(False, False)
+    root.protocol("WM_DELETE_WINDOW", lambda: on_close(root)) 
+
+    label = tk.Label(root, text="Video Stream Status:", font=("Arial", 10))
+    label.pack(pady=5)
     
-    while not SHOULD_QUIT.is_set():
-        try:
-            command = input("Video Command: ").strip().lower()
-            
-            if command == 'v':
-                IS_VIDEO_OFF = not IS_VIDEO_OFF
-                status = "OFF (Sending placeholder)" if IS_VIDEO_OFF else "ON (Sending live feed)"
-                print(f"[STATUS] Video is now {status}.")
-            
-            elif command == 'q':
-                print("[STATUS] Quit command received.")
-                SHOULD_QUIT.set()
-                break
-                
-            else:
-                print("[WARNING] Invalid command. Use 'v' or 'q'.")
-                
-        except EOFError:
-            SHOULD_QUIT.set()
-        except KeyboardInterrupt:
-            SHOULD_QUIT.set()
+    # Initial state is ON
+    video_button = tk.Button(root, text="Turn OFF Video", command=lambda: toggle_video(video_button), 
+                             font=("Arial", 12, "bold"), bg="#ff7070", fg="white", padx=10, pady=5)
+    video_button.pack(pady=5)
+    
+    # Run the Tkinter main loop in the main thread
+    root.mainloop()
+
+def on_close(root):
+    """Function called when the control window is closed."""
+    SHOULD_QUIT.set()
+    root.destroy()
 
 
 # --- Handshake and Video Logic ---
@@ -106,14 +114,11 @@ def send_video():
         else:
             success, frame = vid.read() 
             if not success or frame is None: 
-                print("[VIDEO] Camera capture failed (frame read error).")
                 break
             
-            # Display own Name on video
             cv2.putText(frame, f"{USER_NAME} (YOU)", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
             data = pickle.dumps(frame)
         
-        # Message format: [Q: code 1] + [Q: message size] + [Frame Data]
         message = struct.pack("Q", 1) + struct.pack("Q", len(data)) + data
         try:
             video_socket.sendall(message)
@@ -122,11 +127,10 @@ def send_video():
             break
             
         cv2.imshow(f"Your Video Stream ({USER_NAME})", frame)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
+        if cv2.waitKey(1) & 0xFF == ord('q'): 
             SHOULD_QUIT.set()
             break
     
-    # Cleanup on thread exit
     vid.release()
     cv2.destroyAllWindows()
     print("[VIDEO] Sender thread closed.")
@@ -134,36 +138,28 @@ def send_video():
 
 def receive_video():
     """Receives video streams from the server and displays them."""
-    global CLIENT_ID
-    print("[VIDEO] Starting video receiver thread...")
-    
     data = b""
     type_and_payload_size = struct.calcsize("Q") * 2 
     remote_names = {} 
 
+    print("[VIDEO] Starting video receiver thread...")
     while not SHOULD_QUIT.is_set():
         try:
-            # --- Receive Header ---
             while len(data) < type_and_payload_size:
                 packet = video_socket.recv(4 * 1024)
                 if not packet: raise ConnectionError("Server closed connection.")
                 data += packet
                 
-            # Unpack Type and Message Size
             type_code = struct.unpack("Q", data[:8])[0]
             packed_msg_size = data[8:16]
             full_msg_size = struct.unpack("Q", packed_msg_size)[0]
             data = data[type_and_payload_size:]
 
-            # --- Receive Full Message ---
             while len(data) < full_msg_size:
                 data += video_socket.recv(4 * 1024)
             full_data = data[:full_msg_size]
-            data = full_data[full_msg_size:] # Only consume payload size of data buffer
+            data = full_data[full_msg_size:]
             
-            # --- Process Message ---
-            
-            # Case 0: Metadata (Name Map)
             if type_code == 0:
                 sender_id = struct.unpack("Q", full_data[:8])[0]
                 name_len = struct.unpack("Q", full_data[8:16])[0]
@@ -171,7 +167,6 @@ def receive_video():
                 remote_name = name_bytes.decode('utf-8')
                 remote_names[sender_id] = remote_name
 
-            # Case 1: Video Frame
             elif type_code == 1:
                 id_size = struct.calcsize("Q")
                 sender_id = struct.unpack("Q", full_data[:id_size])[0]
@@ -186,36 +181,28 @@ def receive_video():
                 SHOULD_QUIT.set()
                 break
 
-        except Exception as e:
-            # print(f"[VIDEO] Receiver thread error: {e}")
+        except Exception:
             break
     print("[VIDEO] Receiver thread closed.")
 
 
 # --- Main Execution ---
+if __name__ == '__main__':
+    # 1. Send our name immediately (Handshake)
+    send_metadata(USER_NAME)
 
-# 1. Send our name immediately (Handshake)
-send_metadata(USER_NAME)
+    # 2. Start communication threads
+    send_thread = threading.Thread(target=send_video, daemon=True)
+    receive_thread = threading.Thread(target=receive_video, daemon=True)
 
-# 2. Start communication threads
-send_thread = threading.Thread(target=send_video, daemon=True)
-receive_thread = threading.Thread(target=receive_video, daemon=True)
-control_thread = threading.Thread(target=control_loop, daemon=True)
+    send_thread.start()
+    receive_thread.start()
 
-send_thread.start()
-receive_thread.start()
-control_thread.start()
+    # 3. Run the Tkinter GUI (Must be in the main thread)
+    create_controls()
 
-
-try:
-    # Wait until quit signal is received
-    while not SHOULD_QUIT.is_set():
-        time.sleep(0.1)
-except KeyboardInterrupt:
-    SHOULD_QUIT.set()
-
-# Cleanup and force exit
-time.sleep(0.5) 
-video_socket.close()
-print("[VIDEO] Client shutdown complete.")
-os._exit(0)
+    # 4. Cleanup
+    time.sleep(0.5) 
+    video_socket.close()
+    print("[VIDEO] Client shutdown complete.")
+    os._exit(0)

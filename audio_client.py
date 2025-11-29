@@ -4,7 +4,7 @@ import threading
 import struct 
 import time
 import os
-import sys
+import tkinter as tk 
 
 # --- Configuration ---
 SERVER_IP = '127.0.0.1' 
@@ -18,7 +18,7 @@ CHUNK_SIZE = 2048
 
 # --- Global Control Flags ---
 IS_MUTED = False
-SHOULD_QUIT = threading.Event() # Used to signal all threads to stop
+SHOULD_QUIT = threading.Event() 
 
 # --- Setup ---
 audio_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -31,36 +31,44 @@ except Exception as e:
 
 audio = pyaudio.PyAudio()
 
-# --- Control Logic ---
+# --- Tkinter Control Logic ---
 
-def control_loop():
-    """Reads commands from the terminal to toggle mute or quit."""
+def toggle_mute(mute_button):
+    """Toggles the MUTE flag and updates the button text/color."""
     global IS_MUTED
+    IS_MUTED = not IS_MUTED
     
-    print("\n[CONTROLS] Type 'm' to Toggle Mute, or 'q' to Quit.")
-    
-    while not SHOULD_QUIT.is_set():
-        try:
-            command = input("Audio Command: ").strip().lower()
-            
-            if command == 'm':
-                IS_MUTED = not IS_MUTED
-                status = "MUTED (Stopping audio send)" if IS_MUTED else "UNMUTED (Sending audio)"
-                print(f"[STATUS] Microphone is now {status}.")
-            
-            elif command == 'q':
-                print("[STATUS] Quit command received.")
-                SHOULD_QUIT.set()
-                break
-                
-            else:
-                print("[WARNING] Invalid command. Use 'm' or 'q'.")
-                
-        except EOFError:
-            SHOULD_QUIT.set()
-        except KeyboardInterrupt:
-            SHOULD_QUIT.set()
+    if IS_MUTED:
+        mute_button.config(text="Unmute",  bg="#70ff70", fg="black")
+        print("[STATUS] Microphone is now MUTED (Sending stopped).")
+    else:
+        mute_button.config(text="Mute",bg="#ff7070", fg="white")
+        print("[STATUS] Microphone is now UNMUTED (Sending started).")
 
+def create_controls():
+    """Sets up the Tkinter control panel."""
+    root = tk.Tk()
+    root.title("Audio Controls")
+    root.geometry("250x100")
+    root.resizable(False, False)
+    root.protocol("WM_DELETE_WINDOW", lambda: on_close(root)) 
+
+    label = tk.Label(root, text="Microphone Status:", font=("Arial", 10))
+    label.pack(pady=5)
+    
+    # Initial state is UNMUTED
+    mute_button = tk.Button(root, text="Mute", command=lambda: toggle_mute(mute_button), 
+                            font=("Arial", 12, "bold"), bg="#ff7070", fg="white", padx=10, pady=5)
+    mute_button.pack(pady=5)
+    
+    # Start the Tkinter main loop in the main thread
+    root.mainloop()
+
+def on_close(root):
+    """Function called when the control window is closed."""
+    SHOULD_QUIT.set()
+    root.destroy()
+    
 # --- Audio Logic ---
 
 def send_audio():
@@ -68,7 +76,6 @@ def send_audio():
     print("[AUDIO] Starting audio sender thread...")
     
     try:
-        # PyAudio fix applied
         stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK_SIZE)
     except Exception as e:
         print(f"[AUDIO] Error opening input audio stream: {e}")
@@ -77,12 +84,10 @@ def send_audio():
         
     while not SHOULD_QUIT.is_set():
         if IS_MUTED:
-            # When muted, sleep to save CPU and bandwidth
             time.sleep(0.05) 
             continue
             
         try:
-            # Read audio data from the microphone
             data = stream.read(CHUNK_SIZE, exception_on_overflow=False) 
             audio_socket.sendall(data)
         except Exception:
@@ -137,26 +142,20 @@ def recv_audio():
 
 
 # --- Main Execution ---
-send_thread = threading.Thread(target=send_audio, daemon=True)
-recv_thread = threading.Thread(target=recv_audio, daemon=True)
-control_thread = threading.Thread(target=control_loop, daemon=True)
+if __name__ == '__main__':
+    # 1. Start communication threads
+    send_thread = threading.Thread(target=send_audio, daemon=True)
+    recv_thread = threading.Thread(target=recv_audio, daemon=True)
 
-send_thread.start()
-recv_thread.start()
-control_thread.start()
+    send_thread.start()
+    recv_thread.start()
 
-try:
-    # Wait until quit signal is received
-    while not SHOULD_QUIT.is_set():
-        time.sleep(0.1)
-except KeyboardInterrupt:
-    SHOULD_QUIT.set()
-except Exception:
-    SHOULD_QUIT.set()
-    
-# Wait a moment for threads to close gracefully
-time.sleep(0.5) 
-audio_socket.close()
-audio.terminate()
-print("[AUDIO] Client shutdown complete.")
-os._exit(0)
+    # 2. Run the Tkinter GUI (Must be in the main thread)
+    create_controls()
+
+    # 3. Cleanup
+    time.sleep(0.5) 
+    audio_socket.close()
+    audio.terminate()
+    print("[AUDIO] Client shutdown complete.")
+    os._exit(0)
