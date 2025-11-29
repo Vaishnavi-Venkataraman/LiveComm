@@ -15,7 +15,7 @@ VIDEO_PORT = 9999
 CHAT_PORT = 5001
 MAX_CHAT_MESSAGE = 1024
 
-USER_NAME = input("Enter your display name: ")
+USER_NAME = sys.argv[1] if len(sys.argv) > 1 else "Anonymous"
 CLIENT_ID = None 
 
 IS_VIDEO_OFF = False
