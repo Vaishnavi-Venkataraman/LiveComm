@@ -6,21 +6,17 @@ import time
 import os
 import tkinter as tk 
 
-# --- Configuration ---
 SERVER_IP = '127.0.0.1' 
 AUDIO_PORT = 5000
 
-# Audio Configuration (Must match server)
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 44100
 CHUNK_SIZE = 2048
 
-# --- Global Control Flags ---
 IS_MUTED = False
 SHOULD_QUIT = threading.Event() 
 
-# --- Setup ---
 audio_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 try:
     audio_socket.connect((SERVER_IP, AUDIO_PORT))
@@ -31,22 +27,18 @@ except Exception as e:
 
 audio = pyaudio.PyAudio()
 
-# --- Tkinter Control Logic ---
-
 def toggle_mute(mute_button):
-    """Toggles the MUTE flag and updates the button text/color."""
     global IS_MUTED
     IS_MUTED = not IS_MUTED
     
     if IS_MUTED:
-        mute_button.config(text="Unmute",  bg="#70ff70", fg="black")
-        print("[STATUS] Microphone is now MUTED (Sending stopped).")
+        mute_button.config(text="Unmute", bg="#70ff70", fg="black")
+        print("[STATUS] Microphone is now muted")
     else:
-        mute_button.config(text="Mute",bg="#ff7070", fg="white")
-        print("[STATUS] Microphone is now UNMUTED (Sending started).")
+        mute_button.config(text="Mute", bg="#ff7070", fg="white")
+        print("[STATUS] Microphone is now unmuted")
 
 def create_controls():
-    """Sets up the Tkinter control panel."""
     root = tk.Tk()
     root.title("Audio Controls")
     root.geometry("250x100")
@@ -56,23 +48,17 @@ def create_controls():
     label = tk.Label(root, text="Microphone Status:", font=("Arial", 10))
     label.pack(pady=5)
     
-    # Initial state is UNMUTED
     mute_button = tk.Button(root, text="Mute", command=lambda: toggle_mute(mute_button), 
                             font=("Arial", 12, "bold"), bg="#ff7070", fg="white", padx=10, pady=5)
     mute_button.pack(pady=5)
     
-    # Start the Tkinter main loop in the main thread
     root.mainloop()
 
 def on_close(root):
-    """Function called when the control window is closed."""
     SHOULD_QUIT.set()
     root.destroy()
     
-# --- Audio Logic ---
-
 def send_audio():
-    """Captures audio chunks and sends them to the server."""
     print("[AUDIO] Starting audio sender thread...")
     
     try:
@@ -98,7 +84,6 @@ def send_audio():
 
 
 def recv_audio():
-    """Receives audio streams from the server and plays them."""
     print("[AUDIO] Starting audio receiver thread...")
     try:
         stream = audio.open(format=FORMAT, channels=CHANNELS, rate=RATE, output=True, frames_per_buffer=CHUNK_SIZE)
@@ -141,19 +126,14 @@ def recv_audio():
     print("[AUDIO] Receiver thread closed.")
 
 
-# --- Main Execution ---
 if __name__ == '__main__':
-    # 1. Start communication threads
     send_thread = threading.Thread(target=send_audio, daemon=True)
     recv_thread = threading.Thread(target=recv_audio, daemon=True)
 
     send_thread.start()
     recv_thread.start()
-
-    # 2. Run the Tkinter GUI (Must be in the main thread)
     create_controls()
 
-    # 3. Cleanup
     time.sleep(0.5) 
     audio_socket.close()
     audio.terminate()
